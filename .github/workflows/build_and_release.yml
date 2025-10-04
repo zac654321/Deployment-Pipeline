@@ -1,0 +1,76 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, dev ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name'
+        required: false
+      note:
+        description: 'Release note'
+        required: false
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  Build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install deps (lockfile-aware)
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          elif [ -f yarn.lock ]; then
+            corepack enable && yarn install --frozen-lockfile || yarn install
+          elif [ -f pnpm-lock.yaml ]; then
+            corepack enable && pnpm install --frozen-lockfile || pnpm install
+          else
+            npm install
+          fi
+      - name: Build
+        run: npm run build --if-present
+
+  Deploy_Dev:
+    name: Deploy to Dev
+    needs: [Build]
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment:
+      name: Dev
+      url: https://dev.myapp.com
+    steps:
+      - run: echo "Deploying to Dev…"  # replace with real deploy
+
+  Deploy_Staging:
+    name: Deploy to Staging
+    needs: [Build]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: Staging
+      url: https://test.myapp.com
+    steps:
+      - run: echo "Deploying to Staging…"  # replace with real deploy
+
+  Deploy_Production:
+    name: Deploy to Production
+    needs: [Deploy_Staging]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: https://www.myapp.com
+    steps:
+      - run: echo "Deploying to Production…"  # replace with real deploy
