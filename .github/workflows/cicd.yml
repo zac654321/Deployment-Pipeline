@@ -1,147 +1,40 @@
-name: CICD
-
+name: CI Dev Deployment
 on:
   push:
-    branches: [ main, dev ]
-  pull_request:
-    branches: [ main, dev ]
-
-concurrency:
-  group: cicd-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
+    branches: [ main ]
 
 jobs:
-  Build:
+  build:
     runs-on: ubuntu-latest
-    # If your app is in a subfolder (e.g. "frontend"), change this:
-    defaults:
-      run:
-        working-directory: .
-
     steps:
-      - uses: actions/checkout@v4
-
-      # Detect which package manager/lockfile you have
-      - name: Detect package manager
-        id: pm
-        run: |
-          if [ -f package-lock.json ]; then
-            echo "pm=npm" >> $GITHUB_OUTPUT
-            echo "lock=package-lock.json" >> $GITHUB_OUTPUT
-          elif [ -f npm-shrinkwrap.json ]; then
-            echo "pm=npm" >> $GITHUB_OUTPUT
-            echo "lock=npm-shrinkwrap.json" >> $GITHUB_OUTPUT
-          elif [ -f yarn.lock ]; then
-            echo "pm=yarn" >> $GITHUB_OUTPUT
-            echo "lock=yarn.lock" >> $GITHUB_OUTPUT
-          elif [ -f pnpm-lock.yaml ]; then
-            echo "pm=pnpm" >> $GITHUB_OUTPUT
-            echo "lock=pnpm-lock.yaml" >> $GITHUB_OUTPUT
-          else
-            echo "pm=none" >> $GITHUB_OUTPUT
-            echo "lock=" >> $GITHUB_OUTPUT
-          fi
-
-      # Setup Node with caching only when a *matching* lockfile exists
-      - name: Setup Node (npm cache)
-        if: ${{ steps.pm.outputs.pm == 'npm' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: ${{ steps.pm.outputs.lock }}
-
-      - name: Setup Node (yarn cache)
-        if: ${{ steps.pm.outputs.pm == 'yarn' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: yarn
-          cache-dependency-path: ${{ steps.pm.outputs.lock }}
-
-      - name: Setup Node (pnpm cache)
-        if: ${{ steps.pm.outputs.pm == 'pnpm' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: pnpm
-          cache-dependency-path: ${{ steps.pm.outputs.lock }}
-
-      - name: Setup Node (no cache)
-        if: ${{ steps.pm.outputs.pm == 'none' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # Install deps (lockfile-aware + fallback)
-      - name: Install dependencies
-        run: |
-          case "${{ steps.pm.outputs.pm }}" in
-            npm)
-              if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-                npm ci
-              else
-                npm install
-              fi
-              ;;
-            yarn)
-              corepack enable
-              yarn install --frozen-lockfile || yarn install
-              ;;
-            pnpm)
-              corepack enable
-              pnpm install --frozen-lockfile || pnpm install
-              ;;
-            none)
-              echo "No lockfile detected; defaulting to npm install"
-              npm install
-              ;;
-          esac
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Build
-        run: npm run build --if-present
-
-      - name: Upload build artifact (optional)
+        run: |
+          npm install
+          npm run build
+          zip -r build.zip.
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build
-          path: |
-            dist
-            build
-          if-no-files-found: ignore
+          name: build-artifact
+          path: build.zip
 
-  Deploy_Dev:
-    needs: Build
-    if: github.ref == 'refs/heads/dev'
+  deploy-dev:
+    needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: Dev
-      url: https://dev.myapp.com
+    environment: dev
     steps:
-      - name: Deploy to Dev
-        run: echo "Deploying to Dev..."  # replace with real deploy commands
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
 
-  Deploy_Staging:
-    needs: Build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: Staging
-      url: https://test.myapp.com
-    steps:
-      - name: Deploy to Staging
-        run: echo "Deploying to Staging..."  # replace with real deploy commands
-
-  Deploy_Production:
-    needs: Deploy_Staging
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: Production
-      url: https://www.myapp.com
-    steps:
-      - name: Deploy to Production
-        run: echo "Deploying to Production..."  # replace with real deploy commands
+      - name: Release Dev Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          gh release create "$TAG" build.zip --notes "$NOTE"
