@@ -4,57 +4,93 @@ on:
   push:
     branches: [ main, dev ]
   pull_request:
+    branches: [ main, dev ]
+
+# Prevent overlapping runs on the same ref
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # id-token: write   # uncomment if you use cloud OIDC in deploy steps
 
 jobs:
   Build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Change this if your app is in a subfolder (e.g., "frontend")
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Node
-        uses: actions/setup-node@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install
-        run: npm ci
+          cache: 'npm'
+          cache-dependency-path: |
+            **/package-lock.json
+            **/npm-shrinkwrap.json
+
+      # ---- FIX: install with smart fallback ----
+      - name: Install dependencies (lockfile-aware)
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          elif [ -f yarn.lock ]; then
+            corepack enable
+            yarn install --frozen-lockfile
+          elif [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm install --frozen-lockfile
+          else
+            echo "No lockfile found; using npm install"
+            npm install
+          fi
+      # ------------------------------------------
+
       - name: Build
-        run: npm run build
-      # Add tests/lint/etc. here
+        run: npm run build --if-present
+
+      - name: Upload build artifact (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: |
+            dist
+            build
+          if-no-files-found: ignore
 
   Deploy_Dev:
-    # This creates the lower “Deploy to Dev” branch off Build
-    needs: [Build]
-    if: github.ref == 'refs/heads/dev' || startsWith(github.head_ref, 'dev')
+    needs: Build
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment:
       name: Dev
       url: https://dev.myapp.com
     steps:
-      - name: Echo deploy
-        run: echo "Deploying to Dev…"
-      # real deploy step goes here (e.g., kubectl/ssh/cloud CLI)
+      - name: Deploy to Dev
+        run: echo "Deploying to Dev..."  # replace with real deploy command(s)
 
   Deploy_Staging:
-    # This is the middle box “Deploy to Staging”
-    needs: [Build]
+    needs: Build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: Staging
       url: https://test.myapp.com
     steps:
-      - name: Echo deploy
-        run: echo "Deploying to Staging…"
-      # real deploy step …
+      - name: Deploy to Staging
+        run: echo "Deploying to Staging..."  # replace with real deploy command(s)
 
   Deploy_Production:
-    # This is the rightmost box “Deploy to Production”
-    needs: [Deploy_Staging]
+    needs: Deploy_Staging
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: Production
       url: https://www.myapp.com
     steps:
-      - name: Echo deploy
-        run: echo "Deploying to Production…"
-      # real deploy step …
+      - name: Deploy to Production
+        run: echo "Deploying to Production..."  # replace with real deploy command(s)
