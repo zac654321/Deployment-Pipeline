@@ -1,0 +1,60 @@
+name: CICD
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+
+jobs:
+  Build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build
+      # Add tests/lint/etc. here
+
+  Deploy_Dev:
+    # This creates the lower “Deploy to Dev” branch off Build
+    needs: [Build]
+    if: github.ref == 'refs/heads/dev' || startsWith(github.head_ref, 'dev')
+    runs-on: ubuntu-latest
+    environment:
+      name: Dev
+      url: https://dev.myapp.com
+    steps:
+      - name: Echo deploy
+        run: echo "Deploying to Dev…"
+      # real deploy step goes here (e.g., kubectl/ssh/cloud CLI)
+
+  Deploy_Staging:
+    # This is the middle box “Deploy to Staging”
+    needs: [Build]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: Staging
+      url: https://test.myapp.com
+    steps:
+      - name: Echo deploy
+        run: echo "Deploying to Staging…"
+      # real deploy step …
+
+  Deploy_Production:
+    # This is the rightmost box “Deploy to Production”
+    needs: [Deploy_Staging]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: https://www.myapp.com
+    steps:
+      - name: Echo deploy
+        run: echo "Deploying to Production…"
+      # real deploy step …
