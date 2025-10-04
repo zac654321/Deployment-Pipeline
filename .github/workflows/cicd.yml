@@ -6,49 +6,100 @@ on:
   pull_request:
     branches: [ main, dev ]
 
-# Prevent overlapping runs on the same ref
 concurrency:
   group: cicd-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  # id-token: write   # uncomment if you use cloud OIDC in deploy steps
 
 jobs:
   Build:
     runs-on: ubuntu-latest
+    # If your app is in a subfolder (e.g. "frontend"), change this:
     defaults:
       run:
-        # Change this if your app is in a subfolder (e.g., "frontend")
         working-directory: .
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # Detect which package manager/lockfile you have
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "pm=npm" >> $GITHUB_OUTPUT
+            echo "lock=package-lock.json" >> $GITHUB_OUTPUT
+          elif [ -f npm-shrinkwrap.json ]; then
+            echo "pm=npm" >> $GITHUB_OUTPUT
+            echo "lock=npm-shrinkwrap.json" >> $GITHUB_OUTPUT
+          elif [ -f yarn.lock ]; then
+            echo "pm=yarn" >> $GITHUB_OUTPUT
+            echo "lock=yarn.lock" >> $GITHUB_OUTPUT
+          elif [ -f pnpm-lock.yaml ]; then
+            echo "pm=pnpm" >> $GITHUB_OUTPUT
+            echo "lock=pnpm-lock.yaml" >> $GITHUB_OUTPUT
+          else
+            echo "pm=none" >> $GITHUB_OUTPUT
+            echo "lock=" >> $GITHUB_OUTPUT
+          fi
+
+      # Setup Node with caching only when a *matching* lockfile exists
+      - name: Setup Node (npm cache)
+        if: ${{ steps.pm.outputs.pm == 'npm' }}
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: |
-            **/package-lock.json
-            **/npm-shrinkwrap.json
+          cache: npm
+          cache-dependency-path: ${{ steps.pm.outputs.lock }}
 
-      # ---- FIX: install with smart fallback ----
-      - name: Install dependencies (lockfile-aware)
+      - name: Setup Node (yarn cache)
+        if: ${{ steps.pm.outputs.pm == 'yarn' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+          cache-dependency-path: ${{ steps.pm.outputs.lock }}
+
+      - name: Setup Node (pnpm cache)
+        if: ${{ steps.pm.outputs.pm == 'pnpm' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: ${{ steps.pm.outputs.lock }}
+
+      - name: Setup Node (no cache)
+        if: ${{ steps.pm.outputs.pm == 'none' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install deps (lockfile-aware + fallback)
+      - name: Install dependencies
         run: |
-          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            npm ci
-          elif [ -f yarn.lock ]; then
-            corepack enable
-            yarn install --frozen-lockfile
-          elif [ -f pnpm-lock.yaml ]; then
-            corepack enable
-            pnpm install --frozen-lockfile
-          else
-            echo "No lockfile found; using npm install"
-            npm install
-          fi
-      # ------------------------------------------
+          case "${{ steps.pm.outputs.pm }}" in
+            npm)
+              if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci
+              else
+                npm install
+              fi
+              ;;
+            yarn)
+              corepack enable
+              yarn install --frozen-lockfile || yarn install
+              ;;
+            pnpm)
+              corepack enable
+              pnpm install --frozen-lockfile || pnpm install
+              ;;
+            none)
+              echo "No lockfile detected; defaulting to npm install"
+              npm install
+              ;;
+          esac
 
       - name: Build
         run: npm run build --if-present
@@ -71,7 +122,7 @@ jobs:
       url: https://dev.myapp.com
     steps:
       - name: Deploy to Dev
-        run: echo "Deploying to Dev..."  # replace with real deploy command(s)
+        run: echo "Deploying to Dev..."  # replace with real deploy commands
 
   Deploy_Staging:
     needs: Build
@@ -82,7 +133,7 @@ jobs:
       url: https://test.myapp.com
     steps:
       - name: Deploy to Staging
-        run: echo "Deploying to Staging..."  # replace with real deploy command(s)
+        run: echo "Deploying to Staging..."  # replace with real deploy commands
 
   Deploy_Production:
     needs: Deploy_Staging
@@ -93,4 +144,4 @@ jobs:
       url: https://www.myapp.com
     steps:
       - name: Deploy to Production
-        run: echo "Deploying to Production..."  # replace with real deploy command(s)
+        run: echo "Deploying to Production..."  # replace with real deploy commands
